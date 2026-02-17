@@ -106,9 +106,7 @@ func parseTemplates() (*template.Template, *template.Template, error) {
 		}
 		funcTemplate = string(f)
 	}
-	tmpl, err := template.New("function").Funcs(template.FuncMap{
-		"replace": strings.ReplaceAll,
-	}).Parse(funcTemplate)
+	tmpl, err := template.New("function").Parse(funcTemplate)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -331,6 +329,8 @@ func requireComment(comment string) string {
 
 func (f *testFunc) CommentRequire() string {
 	comment := strings.ReplaceAll(f.DocInfo.Doc, "assert.", "require.")
+	// Preserve assert.CollectT, even in package 'require'
+	comment = strings.ReplaceAll(comment, "require.CollectT", "assert.CollectT")
 	return requireComment(comment)
 }
 
