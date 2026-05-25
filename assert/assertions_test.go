@@ -164,7 +164,7 @@ func TestObjectsAreEqualValues(t *testing.T) {
 		{complex128(1e+10 + 1e+10i), complex64(1e+10 + 1e+10i), true},
 		{complex64(1e+10 + 1e+10i), complex128(1e+10 + 1e+10i), true},
 		{map[string]interface{}{"1": int32(1)}, map[string]interface{}{"1": int64(1)}, true},
-		{map[int]interface{}{1: int32(1)}, map[int64]interface{}{1: int64(1)}, true},
+		{map[int]interface{}{1: int32(1)}, map[int64]interface{}{1: int64(1)}, false},
 		{map[interface{}]interface{}{1: int32(1)}, map[interface{}]interface{}{"1": int64(1)}, false},
 	}
 

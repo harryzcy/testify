@@ -245,8 +245,8 @@ func listsAreEqualValues(expected, actual interface{}) bool {
 	return true
 }
 
-// mapsAreEqualValues returns true if all the keys in the expected
-// and actual maps are convertible to the larger type and equal.
+// mapsAreEqualValues returns true if all the values for a given key
+// in the expected and actual maps are convertible to the larger type and equal.
 //
 // This function should only be used by ObjectsAreEqualValues.
 func mapsAreEqualValues(expected, actual interface{}) bool {
@@ -259,17 +259,16 @@ func mapsAreEqualValues(expected, actual interface{}) bool {
 		return false
 	}
 
-	// Key types should be convertible
+	// Key types should be directly equal
 	expectedKeyType := expectedValue.Type().Key()
 	actualKeyType := actualValue.Type().Key()
-	if !expectedKeyType.ConvertibleTo(actualKeyType) {
+	if expectedKeyType != actualKeyType {
 		return false
 	}
 
 	for _, expectedKey := range expectedKeys {
-		actualKey := expectedKey.Convert(actualKeyType)
 		expectedElem := expectedValue.MapIndex(expectedKey)
-		actualElem := actualValue.MapIndex(actualKey)
+		actualElem := actualValue.MapIndex(expectedKey)
 		if !actualElem.IsValid() { // if key doesn't exist
 			return false
 		}
