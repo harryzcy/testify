@@ -174,12 +174,16 @@ func ObjectsAreEqualValues(expected, actual interface{}) bool {
 	expectedType := expectedValue.Type()
 	actualType := actualValue.Type()
 
-	if expectedType.Kind() == actualType.Kind() {
-		// Test when object type is array/slice/map
-		switch actualType.Kind() {
-		case reflect.Array, reflect.Slice:
+	fmt.Println(expectedType.Kind(), actualType.Kind())
+
+	// Test when object type is array/slice/map
+	switch actualType.Kind() {
+	case reflect.Array, reflect.Slice:
+		if expectedType.Kind() == reflect.Array || expectedType.Kind() == reflect.Slice {
 			return listsAreEqualValues(expected, actual)
-		case reflect.Map:
+		}
+	case reflect.Map:
+		if expectedType.Kind() == reflect.Map {
 			return mapsAreEqualValues(expected, actual)
 		}
 	}
