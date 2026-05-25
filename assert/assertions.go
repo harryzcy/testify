@@ -213,13 +213,12 @@ func isNumericType(t reflect.Type) bool {
 	return t.Kind() >= reflect.Int && t.Kind() <= reflect.Complex128
 }
 
-// listsAreEqualValues gets whether two lists(arrays, slices) are equal, or if their
-// values are equal.
+// listsAreEqualValues returns true if the expected and actual lists
+// (arrays or slices) are the same length, and each index in both lists
+// is convertible to the larger type and equal.
 //
 // This function should only be used by ObjectsAreEqualValues.
 func listsAreEqualValues(expected, actual interface{}) bool {
-	expectedValue := reflect.ValueOf(expected)
-	actualValue := reflect.ValueOf(actual)
 
 	// Assure two objects have the same length
 	expectedLen, expectedOK := getLen(expected)
@@ -231,6 +230,9 @@ func listsAreEqualValues(expected, actual interface{}) bool {
 		return false
 	}
 
+	expectedValue := reflect.ValueOf(expected)
+	actualValue := reflect.ValueOf(actual)
+
 	// Iterate over elements and compare
 	for i := 0; i < expectedLen; i++ {
 		if !ObjectsAreEqualValues(expectedValue.Index(i).Interface(), actualValue.Index(i).Interface()) {
@@ -240,8 +242,8 @@ func listsAreEqualValues(expected, actual interface{}) bool {
 	return true
 }
 
-// mapsAreEqualValues gets whether two maps are equal, or if their
-// values are equal.
+// mapsAreEqualValues returns true if all the keys in the expected
+// and actual maps are convertible to the larger type and equal.
 //
 // This function should only be used by ObjectsAreEqualValues.
 func mapsAreEqualValues(expected, actual interface{}) bool {
