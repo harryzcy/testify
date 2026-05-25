@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
-	"io/ioutil"
+	"io"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -15,6 +15,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// allTestsFilter is a yes filter for testing.RunTests
+func allTestsFilter(pat, str string) (bool, error) {
+	return true, nil
+}
 
 // SuiteRequireTwice is intended to test the usage of suite.Require in two
 // different tests
@@ -440,7 +445,7 @@ func (sc *StdoutCapture) StopCapture() (string, error) {
 	}
 	os.Stdout.Close()
 	os.Stdout = sc.oldStdout
-	bytes, err := ioutil.ReadAll(sc.readPipe)
+	bytes, err := io.ReadAll(sc.readPipe)
 	if err != nil {
 		return "", err
 	}
@@ -576,6 +581,42 @@ func TestSuiteWithStats(t *testing.T) {
 	assert.NotZero(t, testStats["TestPanic"].Start)
 	assert.NotZero(t, testStats["TestPanic"].End)
 	assert.False(t, testStats["TestPanic"].Passed)
+}
+
+type suiteWithSkipInSetupAndStats struct {
+	Suite
+	wasCalled bool
+	stats     *SuiteInformation
+}
+
+func (s *suiteWithSkipInSetupAndStats) SetupTest() {
+	s.T().Skip("skip in setup")
+}
+
+func (s *suiteWithSkipInSetupAndStats) HandleStats(_ string, stats *SuiteInformation) {
+	s.wasCalled = true
+	s.stats = stats
+}
+
+func (s *suiteWithSkipInSetupAndStats) TestSomething() {
+	s.Fail("should not run")
+}
+
+func TestSuiteWithSkipInSetupAndStats(t *testing.T) {
+	skipSuite := new(suiteWithSkipInSetupAndStats)
+
+	testing.RunTests(allTestsFilter, []testing.InternalTest{
+		{
+			Name: t.Name() + "/skipSuite",
+			F: func(t *testing.T) {
+				Run(t, skipSuite)
+			},
+		},
+	})
+
+	assert.True(t, skipSuite.wasCalled, "HandleStats should have been called")
+	assert.NotNil(t, skipSuite.stats, "stats should not be nil")
+	assert.NotNil(t, skipSuite.stats.TestStats["TestSomething"], "test stats entry should exist even when skipped in SetupTest")
 }
 
 // FailfastSuite will test the behavior when running with the failfast flag
@@ -745,4 +786,66 @@ func TestUnInitializedSuites(t *testing.T) {
 			suite.Assert().True(true)
 		})
 	})
+}
+
+// SuiteSignatureValidationTester tests valid and invalid method signatures.
+type SuiteSignatureValidationTester struct {
+	Suite
+
+	executedTestCount int
+	setUp             bool
+	toreDown          bool
+}
+
+// SetupSuite runs once before any tests.
+func (s *SuiteSignatureValidationTester) SetupSuite() {
+	s.setUp = true
+}
+
+// TearDownSuite runs once after all tests.
+func (s *SuiteSignatureValidationTester) TearDownSuite() {
+	s.toreDown = true
+}
+
+// Valid test method — should run.
+func (s *SuiteSignatureValidationTester) TestValidSignature() {
+	s.executedTestCount++
+}
+
+// Invalid: has return value.
+func (s *SuiteSignatureValidationTester) TestInvalidSignatureReturnValue() interface{} {
+	s.executedTestCount++
+	return nil
+}
+
+// Invalid: has input arg.
+func (s *SuiteSignatureValidationTester) TestInvalidSignatureArg(somearg string) {
+	s.executedTestCount++
+}
+
+// Invalid: both input arg and return value.
+func (s *SuiteSignatureValidationTester) TestInvalidSignatureBoth(somearg string) interface{} {
+	s.executedTestCount++
+	return nil
+}
+
+// TestSuiteSignatureValidation ensures that invalid signature methods fail and valid method runs.
+func TestSuiteSignatureValidation(t *testing.T) {
+	suiteTester := new(SuiteSignatureValidationTester)
+
+	ok := testing.RunTests(allTestsFilter, []testing.InternalTest{
+		{
+			Name: "signature validation",
+			F: func(t *testing.T) {
+				Run(t, suiteTester)
+			},
+		},
+	})
+
+	require.False(t, ok, "Suite should fail due to invalid method signatures")
+
+	assert.Equal(t, 1, suiteTester.executedTestCount, "Only the valid test method should have been executed")
+
+	assert.True(t, suiteTester.setUp, "SetupSuite should have been executed")
+	assert.True(t, suiteTester.toreDown, "TearDownSuite should have been executed")
 }

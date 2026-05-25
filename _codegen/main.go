@@ -16,7 +16,6 @@ import (
 	"go/token"
 	"go/types"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path"
@@ -24,7 +23,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/ernesto-jimenez/gogen/imports"
+	"github.com/stretchr/testify/_codegen/internal/imports"
 )
 
 var (
@@ -101,7 +100,7 @@ func parseTemplates() (*template.Template, *template.Template, error) {
 		return nil, nil, err
 	}
 	if *tmplFile != "" {
-		f, err := ioutil.ReadFile(*tmplFile)
+		f, err := os.ReadFile(*tmplFile)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -178,23 +177,22 @@ func parsePackageSource(pkg string) (*types.Scope, *doc.Package, error) {
 	}
 
 	fset := token.NewFileSet()
-	files := make(map[string]*ast.File)
 	fileList := make([]*ast.File, len(pd.GoFiles))
 	for i, fname := range pd.GoFiles {
-		src, err := ioutil.ReadFile(path.Join(pd.Dir, fname))
+		src, err := os.ReadFile(path.Join(pd.Dir, fname))
 		if err != nil {
 			return nil, nil, err
 		}
-		f, err := parser.ParseFile(fset, fname, src, parser.ParseComments|parser.AllErrors)
+		// SkipObjectResolution for less memory usage in the go/types era
+		f, err := parser.ParseFile(fset, fname, src, parser.ParseComments|parser.AllErrors|parser.SkipObjectResolution)
 		if err != nil {
 			return nil, nil, err
 		}
-		files[fname] = f
 		fileList[i] = f
 	}
 
 	cfg := types.Config{
-		Importer: importer.For("source", nil),
+		Importer: importer.ForCompiler(fset, "source", nil),
 	}
 	info := types.Info{
 		Defs: make(map[*ast.Ident]types.Object),
@@ -206,8 +204,10 @@ func parsePackageSource(pkg string) (*types.Scope, *doc.Package, error) {
 
 	scope := tp.Scope()
 
-	ap, _ := ast.NewPackage(fset, files, nil, nil)
-	docs := doc.New(ap, pkg, 0)
+	docs, err := doc.NewFromFiles(fset, fileList, pkg)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	return scope, docs, nil
 }
@@ -228,7 +228,7 @@ func (f *testFunc) Qualifier(p *types.Package) string {
 func (f *testFunc) Params() string {
 	sig := f.TypeInfo.Type().(*types.Signature)
 	params := sig.Params()
-	p := ""
+	var p strings.Builder
 	comma := ""
 	to := params.Len()
 	var i int
@@ -238,20 +238,23 @@ func (f *testFunc) Params() string {
 	}
 	for i = 1; i < to; i++ {
 		param := params.At(i)
-		p += fmt.Sprintf("%s%s %s", comma, param.Name(), types.TypeString(param.Type(), f.Qualifier))
+		p.WriteString(comma)
+		p.WriteString(param.Name())
+		p.WriteString(" ")
+		p.WriteString(types.TypeString(param.Type(), f.Qualifier))
 		comma = ", "
 	}
 	if sig.Variadic() {
 		param := params.At(params.Len() - 1)
-		p += fmt.Sprintf("%s%s ...%s", comma, param.Name(), types.TypeString(param.Type().(*types.Slice).Elem(), f.Qualifier))
+		fmt.Fprintf(&p, "%s%s ...%s", comma, param.Name(), types.TypeString(param.Type().(*types.Slice).Elem(), f.Qualifier))
 	}
-	return p
+	return p.String()
 }
 
 func (f *testFunc) ForwardedParams() string {
 	sig := f.TypeInfo.Type().(*types.Signature)
 	params := sig.Params()
-	p := ""
+	var p strings.Builder
 	comma := ""
 	to := params.Len()
 	var i int
@@ -261,14 +264,15 @@ func (f *testFunc) ForwardedParams() string {
 	}
 	for i = 1; i < to; i++ {
 		param := params.At(i)
-		p += fmt.Sprintf("%s%s", comma, param.Name())
+		p.WriteString(comma)
+		p.WriteString(param.Name())
 		comma = ", "
 	}
 	if sig.Variadic() {
 		param := params.At(params.Len() - 1)
-		p += fmt.Sprintf("%s%s...", comma, param.Name())
+		fmt.Fprintf(&p, "%s%s...", comma, param.Name())
 	}
-	return p
+	return p.String()
 }
 
 func (f *testFunc) ParamsFormat() string {
@@ -284,10 +288,15 @@ func (f *testFunc) Comment() string {
 }
 
 func (f *testFunc) CommentFormat() string {
-	search := fmt.Sprintf("%s", f.DocInfo.Name)
+	search := f.DocInfo.Name
 	replace := fmt.Sprintf("%sf", f.DocInfo.Name)
-	comment := strings.Replace(f.Comment(), search, replace, -1)
-	exp := regexp.MustCompile(replace + `\(((\(\)|[^\n])+)\)`)
+	comment := strings.ReplaceAll(f.Comment(), search, replace)
+
+	// NOTE: Some functions have msgAndArgs at the end. It needs to be omitted. (currently only EventuallyWithT)
+	// Change here if the original comment changed.
+	comment = strings.Replace(comment, `, "external state has not changed to 'true'; still false"`, "", 1)
+
+	exp := regexp.MustCompile(replace + `\((([^()]*|\([^()]*\))*)\)`)
 	return exp.ReplaceAllString(comment, replace+`($1, "error message %s", "formatted")`)
 }
 
@@ -295,6 +304,50 @@ func (f *testFunc) CommentWithoutT(receiver string) string {
 	search := fmt.Sprintf("assert.%s(t, ", f.DocInfo.Name)
 	replace := fmt.Sprintf("%s.%s(", receiver, f.DocInfo.Name)
 	return strings.Replace(f.Comment(), search, replace, -1)
+}
+
+func requireComment(comment string) string {
+	const returnClause = "Returns whether the assertion was successful (true) or not (false)"
+	const emptyString = ""
+
+	comment = strings.ReplaceAll(comment, returnClause+".", emptyString)
+	comment = strings.ReplaceAll(comment, returnClause, emptyString)
+
+	// convert from: "if cond {\n  body\n}" to "cond\nbody"
+	ifBlockReg := regexp.MustCompile(`(?m)^([\t ]*)if (.+) \{\n((?:.*\n)*?)\s*\}`)
+
+	comment = ifBlockReg.ReplaceAllStringFunc(comment, func(match string) string {
+		nestedMatch := ifBlockReg.FindStringSubmatch(match)
+		indent, cond, body := nestedMatch[1], nestedMatch[2], nestedMatch[3]
+		out := []string{indent + cond}
+
+		for _, line := range strings.Split(
+			strings.TrimRight(body, "\n"),
+			"\n",
+		) {
+			if t := strings.TrimSpace(line); t != emptyString {
+				out = append(out, indent+t)
+			}
+		}
+
+		return strings.Join(out, "\n")
+	})
+
+	final := strings.TrimSpace(comment)
+	return "// " + strings.ReplaceAll(final, "\n", "\n// ")
+}
+
+func (f *testFunc) CommentRequire() string {
+	comment := strings.ReplaceAll(f.DocInfo.Doc, "assert.", "require.")
+	// Preserve assert.CollectT, even in package 'require'
+	comment = strings.ReplaceAll(comment, "require.CollectT", "assert.CollectT")
+	return requireComment(comment)
+}
+
+func (f *testFunc) CommentRequireWithoutT(receiver string) string {
+	assertCallRe := regexp.MustCompile(`assert\.(\w+)\(t, `)
+	comment := assertCallRe.ReplaceAllString(f.DocInfo.Doc, receiver+".$1(")
+	return requireComment(comment)
 }
 
 // Standard header https://go.dev/s/generatedcode.
