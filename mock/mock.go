@@ -952,6 +952,18 @@ func (args Arguments) Is(objects ...interface{}) bool {
 	return true
 }
 
+// missingArgument is the sentinel [Arguments.Diff] uses for an argument that
+// only one side has, either because the call passed fewer arguments than the
+// expectation declares or because it passed more. The type is unexported and
+// has no constructor, so an expectation can never hold a value equal to it.
+type missingArgument struct{}
+
+// String returns the text used for a missing argument in failure messages.
+func (missingArgument) String() string { return "(Missing)" }
+
+// missing is the only value of type [missingArgument].
+var missing missingArgument
+
 // Diff gets a string describing the differences between the arguments
 // and the specified objects.
 //
@@ -972,19 +984,31 @@ func (args Arguments) Diff(objects []interface{}) (string, int) {
 		var actualFmt, expectedFmt string
 
 		if len(objects) <= i {
-			actual = "(Missing)"
-			actualFmt = "(Missing)"
+			actual = missing
+			actualFmt = missing.String()
 		} else {
 			actual = objects[i]
 			actualFmt = fmt.Sprintf("(%[1]T=%[1]v)", actual)
 		}
 
 		if len(args) <= i {
-			expected = "(Missing)"
-			expectedFmt = "(Missing)"
+			expected = missing
+			expectedFmt = missing.String()
 		} else {
 			expected = args[i]
 			expectedFmt = fmt.Sprintf("(%[1]T=%[1]v)", expected)
+		}
+
+		// A missing argument on either side means the call and the expectation
+		// disagree on how many arguments there are, which no matcher can
+		// reconcile. Report the difference before any matcher is given the
+		// sentinel to look at.
+		_, actualMissing := actual.(missingArgument)
+		_, expectedMissing := expected.(missingArgument)
+		if actualMissing || expectedMissing {
+			differences++
+			output = fmt.Sprintf("%s\t%d: FAIL:  %s != %s\n", output, i, actualFmt, expectedFmt)
+			continue
 		}
 
 		if matcher, ok := expected.(argumentMatcher); ok {
